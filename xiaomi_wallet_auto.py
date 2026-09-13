@@ -109,8 +109,8 @@ class XiaomiWalletBot:
             return all_devices[key]
 
         dev = {
-            "imei": "352093110294821",
-            "deviceId": "xagapro",
+            "imei": "862190063736876",
+            "deviceId": "22041216UC",
             "longitude": f"{116.3 + random.random() * 0.1:.6f}",
             "latitude": f"{39.9 + random.random() * 0.1:.6f}"
         }
