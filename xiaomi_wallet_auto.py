@@ -15,6 +15,7 @@ import sys
 import time
 import json
 import random
+import re
 import requests
 from typing import Optional, Dict, Any, List
 
@@ -286,19 +287,52 @@ class XiaomiWalletBot:
             print(f"[-] clickTask 请求异常: {e}")
             return False
 
-    def complete_task(self, task_id: int, brows_task_id: int, brows_click_url_id: str, browse_seconds: int = 10) -> Optional[Dict[str, Any]]:
-        """上报完成 10 秒广告浏览任务 (现版本必须走 GET 请求)"""
+    @staticmethod
+    def parse_browse_duration(task: Dict[str, Any], url_info: Optional[Dict[str, Any]] = None) -> int:
+        """
+        动态匹配任务所需浏览时长 (完美支持 0~60 秒及以上，兼容毫秒/秒两种单位与正则提取)
+        """
+        url_info = url_info or {}
+        raw_val = task.get("browseTime")
+        if raw_val is None or raw_val == "":
+            raw_val = url_info.get("browseTime")
+
+        # 尝试从任务名称或描述中正则匹配 (如 "浏览10秒", "浏览15秒", "浏览30秒", "浏览60秒")
+        for text_source in (task.get("taskName", ""), task.get("taskDesc", "")):
+            if text_source:
+                m = re.search(r"浏览\s*(\d+)\s*秒", text_source)
+                if m:
+                    return int(m.group(1))
+
+        if raw_val is None or raw_val == "":
+            return 10  # 默认兜底 10 秒
+
+        try:
+            val = int(raw_val)
+            if val >= 1000:
+                # 毫秒单位换算 (10000ms -> 10s, 15000ms -> 15s, 60000ms -> 60s)
+                sec = int(round(val / 1000.0))
+            else:
+                # 秒单位 (0s, 5s, 10s, 15s, 30s, 60s)
+                sec = val
+            return max(0, min(sec, 120))
+        except (ValueError, TypeError):
+            return 10
+
+    def complete_task(self, task_id: int, brows_task_id: int, brows_click_url_id: str, browse_seconds: int = 10, task_code: str = TASK_CODE) -> Optional[Dict[str, Any]]:
+        """上报完成广告浏览任务 (现版本必须走 GET 请求)"""
         url = f"https://{API_HOST}/mp/api/generalActivity/completeTask"
+        browse_time_param = str(browse_seconds * 1000 if browse_seconds > 0 else 0)
         params = {
             "activityCode": ACTIVITY_CODE,
             "taskId": task_id,
-            "taskCode": TASK_CODE,
+            "taskCode": task_code,
             "browsTaskId": brows_task_id,
             "browsClickUrlId": brows_click_url_id,
             "clickEntryType": "undefined",
             "festivalStatus": "0",
             "completeTime": str(int(time.time() * 1000)),
-            "browseTime": str(browse_seconds * 1000),
+            "browseTime": browse_time_param,
             "app": "com.mipay.wallet",
             "deviceType": "2",
             "system": "1",
@@ -460,12 +494,13 @@ class XiaomiWalletBot:
                 print(f"[+] 浏览 10 秒任务今日已圆满完成 (completeStatus={complete_status}, 已完成{period_complete}轮)！")
                 break
 
-            # 状态检查 C: 获取广告下发参数
+            # 状态检查 C: 获取广告下发参数与动态任务时长
             brows_click_url_id = url_info.get("browsClickUrlId", "")
             brows_task_id = url_info.get("id", 30)
             task_id = task.get("taskId", 813)
-            browse_time_ms = task.get("browseTime", 10000)
-            browse_seconds = max(10, int(browse_time_ms / 1000))
+
+            # 🎯 动态自适应解析 0~60 秒任务时长 (兼容毫秒/秒/名称正则提取)
+            base_seconds = self.parse_browse_duration(task, url_info)
 
             if not brows_click_url_id:
                 print("[!] 服务端未返回广告 URL 标识 (browsClickUrlId 为空)，判定当前无可用广告")
@@ -480,17 +515,25 @@ class XiaomiWalletBot:
             if not self.click_task(task_id, brows_task_id, brows_click_url_id):
                 print("  [-] clickTask 失败，尝试继续...")
 
-            # 步骤 2.2: 拟真倒计时等待
-            wait_time = browse_seconds + random.randint(1, 3)
-            print(f"  [2] 拟真浏览网页 {wait_time} 秒...")
-            for sec in range(wait_time, 0, -1):
-                print(f"      倒计时: {sec} 秒...", end="\r", flush=True)
-                time.sleep(1)
-            print(f"      倒计时: 0 秒 -> 浏览完成！")
+            # 步骤 2.2: 动态拟真倒计时与缓冲等待 (0~60s 自适应 + 拟真随机延迟)
+            if base_seconds == 0:
+                # 0 秒即时任务：附加 2.0~3.5 秒自然手速与页面加载延迟，防风控瞬时拦截
+                action_delay = round(random.uniform(2.0, 3.5), 1)
+                print(f"  [2] 该任务为即时/0秒任务，添加拟真操作缓冲延迟 {action_delay} 秒...")
+                time.sleep(action_delay)
+            else:
+                # 1~60 秒及以上任务：基准秒数 + 2~5 秒防时钟偏差与网络抖动随机缓冲
+                extra_buffer = random.randint(2, 5)
+                total_wait = base_seconds + extra_buffer
+                print(f"  [2] 🎯 动态匹配任务时长: 基准 {base_seconds} 秒 + 拟真安全缓冲 {extra_buffer} 秒 (共计拟真浏览 {total_wait} 秒)...")
+                for sec in range(total_wait, 0, -1):
+                    print(f"      倒计时: {sec:2d} 秒...", end="\r", flush=True)
+                    time.sleep(1)
+                print(f"      倒计时:  0 秒 -> 拟真浏览完毕！")
 
             # 步骤 2.3: 上报 completeTask (GET)
             print("  [3] 上报完成任务...")
-            comp_res = self.complete_task(task_id, brows_task_id, brows_click_url_id, wait_time)
+            comp_res = self.complete_task(task_id, brows_task_id, brows_click_url_id, base_seconds)
             time.sleep(random.uniform(1.5, 2.5))
 
             # 步骤 2.4: 开奖领取奖励 (GET)
