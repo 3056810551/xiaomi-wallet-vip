@@ -1,0 +1,26 @@
+# 敏感个人鉴权凭据与临时会话 (严禁提交)
+xiaomi_account.json
+real_phone_cookie.txt
+*.cookie
+*.token
+
+# 临时图片与二维码
+qrcode.png
+test_qr.png
+*.jpg
+*.jpeg
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*.class
+env/
+venv/
+.venv/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store

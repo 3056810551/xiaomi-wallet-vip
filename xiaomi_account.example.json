@@ -1,0 +1,6 @@
+{
+  "userId": "1000000000",
+  "passToken": "V1:example_pass_token_from_qr_login...",
+  "securityToken": "example_security_token==",
+  "updatedAt": "2026-09-13 12:00:00"
+}
